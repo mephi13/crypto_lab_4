@@ -1,0 +1,6 @@
+.env
+lab-4.pdf
+__pycache__/
+.pytest_cache/
+file.log
+test_file.*
