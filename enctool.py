@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from dataclasses import dataclass
 from Cryptodome.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
+from Crypto import Random
 from collections import namedtuple
 
 
@@ -34,16 +35,11 @@ class Encryptor:
         self.mode = mode
         self.key_id = key_id
         self._get_private_key()
+        self.insecure_iv = Random.get_random_bytes(128//8)
+        logger.debug("Generated insecure IV: ")
+        logger.debug(self.insecure_iv)
+        logger.debug("Encryptor initialized in AES-"+self.mode + " mode")
         pass
-
-    def _setup_AES(self, key=None):
-        if not key:
-            key = self.private_key
-        else:
-            logger.debug(f"Using custom key: {key}")
-        mode = getattr(AES, "MODE_" + self.mode)
-        logger.debug("AES mode: " + str(mode) + ", MODE_" + self.mode) 
-        self.AES = AES.new(key, mode)
 
     def _get_private_key(self):
         try:
@@ -66,7 +62,7 @@ class Encryptor:
 
     def encrypt(self, message, file=False, save_as=None, custom_key=None):
         # if were encrypting a file, read file
-        self._setup_AES(key=custom_key)
+        key = custom_key if custom_key else self.private_key
 
         if save_as:
             with open(save_as, "w") as f:
@@ -82,20 +78,35 @@ class Encryptor:
 
         logger.debug("Encrypting message: \n" + message)
         # encode end pad message
-        message = message.encode("utf-16")
-        message = pad(message, AES.block_size)
-
+        message = message.encode()
+        
         # Mode is GCM
         if self.mode == "GCM":
-            result = self.AES.encrypt_and_digest(message)
+            encryptor = AES.new(key, AES.MODE_GCM)
+            result = encryptor.encrypt_and_digest(message)
             ciphertext, tag = result
-            nonce = self.AES.nonce
-        # Mode is probably cBC
+            nonce = encryptor.nonce
+        # Mode is cBC
         elif self.mode == "CBC":
-            result = self.AES.encrypt(message)
+            message = pad(message, AES.block_size)
+            encryptor = AES.new(key, AES.MODE_CBC)
+            result = encryptor.encrypt(message)
             ciphertext = result
             tag = None
-            nonce = self.AES.iv
+            nonce = encryptor.iv
+        # Mode is insecure CBC
+        elif self.mode == "ICBC":
+            message = pad(message, AES.block_size)
+            iv = int.from_bytes(self.insecure_iv, "big")
+            iv += 1
+            self.insecure_iv = iv.to_bytes(128//8, "big")
+            logger.debug("Insecure iv: ")
+            logger.debug(self.insecure_iv)
+            encryptor = AES.new(key, AES.MODE_CBC, iv=self.insecure_iv)
+            result = encryptor.encrypt(message)
+            ciphertext = result
+            tag = None
+            nonce = encryptor.iv
 
         result = enc_text(ciphertext, tag, nonce)
         logger.debug("Encryption result: ")
@@ -132,7 +143,7 @@ class Encryptor:
         logger.debug("Decrypting ciphertext: ")
         logger.debug(ctext)
 
-        if self.mode == "CBC":
+        if self.mode == "CBC" or self.mode == "ICBC":
             iv = ctext.nonce_or_iv
             ciphertext = ctext.ctext
             decryptor = AES.new(key, AES.MODE_CBC, iv=iv)
@@ -150,21 +161,36 @@ class Encryptor:
             decryptor = AES.new(key, AES.MODE_GCM, nonce=nonce)
             try: 
                 plaintext = decryptor.decrypt_and_verify(ciphertext=ciphertext,received_mac_tag=tag)
-                plaintext = unpad(plaintext, AES.block_size)
+                plaintext = plaintext
             except ValueError as ex:
                 logger.error(ex)
                 return None
 
-        plaintext = plaintext.decode("utf-16")
-        logger.debug(f"Decrypted message: \n{plaintext}")
+        try:
+            plaintext = plaintext.decode()
+            logger.debug(f"Decrypted message: \n{plaintext}")
+        except Exception as ex:
+            logger.error(ex)
+            return None
 
         if save_as:
             with open(save_as, "w") as f:
                 f.write(plaintext)
 
-
         return plaintext
 
+    def oracle(self, messages):
+        logger.info("Starting oracle mode...")
+
+        logger.info("Output format is message:ciphertext")
+
+        ctexts = []
+        for message in messages:
+            ct = self.encrypt(message)    
+            ctexts.append(ct)
+            print(f"{message}:{ct}")
+        
+        return ctexts
 
 if __name__=="__main__":
     try:
@@ -174,9 +200,9 @@ if __name__=="__main__":
         group.add_argument("-e", "--encrypt", type=str, nargs=2, help="encrypt file(s) on disk")
         group.add_argument("-c", "--challenge", type=str, nargs=2, help="challenge mode - on input [m0, m1] pick independently, \
     uniformly at random a bit b and return a ciphertext cb of a message mb")
-        group.add_argument("-o", "--oracle", type=str, nargs='?', help="oracle mode - on input consisting of q messages, return q ciphertexts")
+        group.add_argument("-o", "--oracle", type=str, nargs='+', help="oracle mode - on input consisting of q messages, return q ciphertexts")
 
-        parser.add_argument("-m", "--mode", choices=["CBC", "GCM"], default="CBC")
+        parser.add_argument("-m", "--mode", choices=["CBC", "GCM", "ICBC"], default="CBC")
         parser.add_argument("-k", "--keystore", type=str, default=".keystore", help="path to the keystore")
         parser.add_argument("-p", "--password", type=str, help="password to the keystore")
         parser.add_argument("-i", "--identifier", type=str, help="key identifier", required=True)
@@ -215,6 +241,12 @@ if __name__=="__main__":
         elif args.challenge:
             pass
         elif args.oracle:
+            logger.debug(f"Parsing messages: {args.oracle}")
+            if isinstance(args.oracle, str):
+                messages = [args.oracle]
+            else:
+                messages = args.oracle
+            encryptor.oracle(messages)
             pass
 
     except Exception as ex:
