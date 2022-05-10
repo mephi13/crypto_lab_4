@@ -3,9 +3,13 @@ import argparse
 import sys
 import os
 import jks
+import random
 import pickle
+import time
+import blessed
 
-from logging import Logger, StreamHandler, INFO, FileHandler, Formatter
+from logging import Logger, StreamHandler, WARNING, FileHandler, Formatter
+import distinguisher
 from dotenv import load_dotenv
 from dataclasses import dataclass
 from Cryptodome.Cipher import AES
@@ -76,9 +80,12 @@ class Encryptor:
                 logger.error(f"No such file or directory: {message}")
                 return
 
-        logger.debug("Encrypting message: \n" + message)
-        # encode end pad message
-        message = message.encode()
+        logger.debug("Encrypting message: ")
+        logger.debug(message)
+        
+        if not isinstance(message, bytes):
+            # encode end pad message
+            message = message.encode()
         
         # Mode is GCM
         if self.mode == "GCM":
@@ -180,20 +187,80 @@ class Encryptor:
         return plaintext
 
     def oracle(self, messages):
-        logger.info("Starting oracle mode...")
+        logger.info("Starting oracle...")
 
         logger.info("Output format is message:ciphertext")
 
         ctexts = []
+        if not isinstance(messages, list):
+            messages = [messages]
+
         for message in messages:
             ct = self.encrypt(message)    
             ctexts.append(ct)
-            print(f"{message}:{ct}")
         
         return ctexts
 
+    def challenge(self, message0, message1):
+        logger.info("Starting challenge...")
+        random.seed(time.time() + int.from_bytes(Random.get_random_bytes(32), "big"))
+        b = random.getrandbits(1)
+
+        logger.debug(f"Chosen bit b={b}")
+        if b == 0: 
+            chosen_message = message0
+            ct = self.encrypt(message0)
+        if b == 1:
+            chosen_message = message1
+            ct = self.encrypt(message1)
+
+        return chosen_message, ct
+
+def CPA_game(term, oracle, distinguisher):
+    logger.info("Starting CPA game with Distinguisher...")
+    # First round - attacker generates two messages
+    m0, m1 = distinguisher.generate_challenge_messages()
+    #   m0, m1
+    # D ------> O
+    print(f"Round 1:")
+    print(f"Attacker generated {term.blue(m0)} and {term.yellow(m1)}")
+
+    # Oracle selects bit b at random and return challenge c*
+    mb, c_star = oracle.challenge(m0, m1)
+    #      c*
+    # D <------ O
+    print(f"Oracle selects challenge\n {term.orange(mb)}:{term.orange(str(c_star.ctext))}")
+
+    # second round - attacker conjures a new message m2 =/= m0,m1
+    # and asks oracle for encrypting it
+    m2 = distinguisher.generate_winning_message(c_star)
+
+    assert m2 != m1 and m2 != m0, "Newly generated message is the same as challenge messages!"
+
+    logger.info(f"m2 from distingusher: {m2}")
+    print(f"Attacker generates a new message {term.pink(m2.decode(errors='replace'))}")
+    c2 = oracle.oracle(m2)[0]
+    print(f"Oracle encrypts newly generated message \n {term.pink(m2.decode(errors='replace'))}:{term.pink(str(c2.ctext))}")
+    #      m2
+    # D ------> O
+    #      c2
+    # D <------ O
+
+    # attacker now can decide if m0 or m1 was the challenge
+    m_guess = distinguisher.distinguish(c2)
+    logger.info(f"mb guessed by distinguisher: {m_guess}")
+    # D outputs m_guess
+    if m_guess == mb:
+        print(term.green("Attacker won!"))
+        return True
+    else:
+        print(term.red(f"Attacker lost!"))
+        return False
+
+
 if __name__=="__main__":
     try:
+        term = blessed.Terminal()
         parser = argparse.ArgumentParser()
         group = parser.add_mutually_exclusive_group(required=True)
         group.add_argument("-d", "--decrypt", type=str, nargs=2, help="decrypt file(s) on disk")
@@ -201,6 +268,8 @@ if __name__=="__main__":
         group.add_argument("-c", "--challenge", type=str, nargs=2, help="challenge mode - on input [m0, m1] pick independently, \
     uniformly at random a bit b and return a ciphertext cb of a message mb")
         group.add_argument("-o", "--oracle", type=str, nargs='+', help="oracle mode - on input consisting of q messages, return q ciphertexts")
+        group.add_argument("-g", "--cpagame", action="count", help="Play CPA game with decryptor", default=0)
+
 
         parser.add_argument("-m", "--mode", choices=["CBC", "GCM", "ICBC"], default="CBC")
         parser.add_argument("-k", "--keystore", type=str, default=".keystore", help="path to the keystore")
@@ -212,7 +281,7 @@ if __name__=="__main__":
 
         load_dotenv()
         handler = StreamHandler(sys.stdout)
-        handler.setLevel(INFO - args.verbosity*10)
+        handler.setLevel(WARNING - args.verbosity*10)
         c_format = Formatter('[%(name)s][%(levelname)s]: %(message)s')
         handler.setFormatter(c_format)
         logger.addHandler(handler)
@@ -230,24 +299,34 @@ if __name__=="__main__":
             ct = encryptor.encrypt(args.encrypt[0], file=True, save_as=args.encrypt[1])
             if ct:
                 logger.info(f"Succesfully encrypted file {args.encrypt[0]} and saved as {args.encrypt[1]}")
+                print(f"Succesfully encrypted file {args.encrypt[0]} and saved as {args.encrypt[1]}")
             else:
                 logger.info(f"Failed to encrypt file {args.encrypt[0]}")
+                print(f"Failed to encrypt file {args.encrypt[0]}")
         elif args.decrypt:
             plaintext = encryptor.decrypt(args.decrypt[0], file=True, save_as=args.decrypt[1])
             if plaintext:
                 logger.info(f"Succesfully decrypted file {args.decrypt[0]} and saved as {args.decrypt[1]}")
+                print(f"Succesfully decrypted file {args.decrypt[0]} and saved as {args.decrypt[1]}")
             else:
                 logger.info(f"Failed to decrypt file {args.decrypt[0]}")
+                print(f"Failed to decrypt file {args.decrypt[0]}")
         elif args.challenge:
-            pass
+            mess, challenge = encryptor.challenge(args.challenge[0], args.challenge[1])
+            print(f"{term.red(mess)}:{challenge}")
         elif args.oracle:
             logger.debug(f"Parsing messages: {args.oracle}")
             if isinstance(args.oracle, str):
                 messages = [args.oracle]
             else:
                 messages = args.oracle
-            encryptor.oracle(messages)
-            pass
+            ct = encryptor.oracle(messages)
+            for i in range(len(ct)):
+                print(f"{term.blue(messages[i])}:{ct[i]}")
+        elif args.cpagame:
+            dist = distinguisher.distinguisher(args.verbosity)
+            CPA_game(term, encryptor, dist)
+
 
     except Exception as ex:
         logger.error(ex.args[0])

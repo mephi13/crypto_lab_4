@@ -3,3 +3,5 @@
 keystore has two keys: 
 `key`,
 `key2`
+
+`./enctool.py -i key -g -p securepass123  -m ICBC -k .keystore`
