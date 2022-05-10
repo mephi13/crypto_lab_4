@@ -1,4 +1,3 @@
-from enctool import enc_text
 from operator import xor
 import sys
 from Crypto import Random
@@ -11,7 +10,7 @@ class distinguisher():
     def __init__(self, verbosity):
         logger = Logger("distinguisher")
         handler_file = FileHandler('file.log')
-        handler_file.setLevel(0)
+        handler_file.setLevel(WARNING - verbosity*10)
         f_format = Formatter('[%(asctime)s][%(name)s][%(levelname)s]: %(message)s')
         handler_file.setFormatter(f_format)
         logger.addHandler(handler_file)

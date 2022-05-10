@@ -18,10 +18,11 @@ from Crypto import Random
 from collections import namedtuple
 
 
+verb = 1
 enc_text = namedtuple("enc_text", "ctext tag nonce_or_iv")
 logger = Logger("encryptor_logger")
 handler_file = FileHandler('file.log')
-handler_file.setLevel(0)
+handler_file.setLevel(WARNING - verb*10)
 f_format = Formatter('[%(asctime)s][%(name)s][%(levelname)s]: %(message)s')
 handler_file.setFormatter(f_format)
 logger.addHandler(handler_file)

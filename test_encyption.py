@@ -1,6 +1,8 @@
 import pytest
 import os
-from enctool import Encryptor, enc_text, logger
+import blessed
+from enctool import Encryptor, enc_text, logger, CPA_game
+from distinguisher import distinguisher
 from dotenv import load_dotenv
 from Crypto import Random
 
@@ -149,3 +151,30 @@ def test_encryption_string_icbc():
 
 def test_file_encryption_icbc():
     _test_files("ICBC")
+
+def _test_attacker(mode):
+    results = []
+    for i in range(64):
+        encryptor = Encryptor(password, mode, key_id)
+        dist = distinguisher(0)
+        result = CPA_game(blessed.Terminal(), encryptor, dist)
+        results.append(result)
+    return results
+
+def test_attacker_icbc():
+    results = _test_attacker("ICBC")
+    successes = results.count(True)
+
+    assert successes == len(results), "Probability of attacker winning is not equal to 1 in insecure CBC!"
+
+def test_attacker_cbc():
+    results = _test_attacker("CBC")
+    successes = results.count(True)
+
+    assert successes/len(results) > 0.35 and successes/len(results) < 0.65, "Probability of attacker winning is not ~50% in CBC mode!"
+
+def test_attacker_gcm():
+    results = _test_attacker("GCM")
+    successes = results.count(True)
+
+    assert successes/len(results) > 0.35 and successes/len(results) < 0.65, "Probability of attacker winning is not ~50% in GCM mode!"
