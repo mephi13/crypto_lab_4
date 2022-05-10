@@ -269,7 +269,7 @@ if __name__=="__main__":
         group.add_argument("-c", "--challenge", type=str, nargs=2, help="challenge mode - on input [m0, m1] pick independently, \
     uniformly at random a bit b and return a ciphertext cb of a message mb")
         group.add_argument("-o", "--oracle", type=str, nargs='+', help="oracle mode - on input consisting of q messages, return q ciphertexts")
-        group.add_argument("-g", "--cpagame", action="count", help="Play CPA game with decryptor", default=0)
+        group.add_argument("-g", "--cpagame", action="count", help="Play CPA game with distinguisher", default=0)
 
 
         parser.add_argument("-m", "--mode", choices=["CBC", "GCM", "ICBC"], default="CBC")
